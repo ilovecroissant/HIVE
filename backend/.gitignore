@@ -2,3 +2,10 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+.venv/
+__pycache__/

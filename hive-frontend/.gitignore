@@ -2,3 +2,10 @@ node_modules
 .next
 .env.local
 *.tsbuildinfo
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+.venv/
+__pycache__/
