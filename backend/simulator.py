@@ -112,9 +112,9 @@ class Simulator:
     def trigger_crisis(self, kind: CrisisKind) -> tuple[ColonyState, list[AgentEvent]]:
         self._active_crisis = kind
         self._advance_tick()
-
-        affected: AgentId = "energy" if kind in ("dust_storm", "power_failure") else "life_support"
-        self._set_status(affected, "analyzing")
+        # Do NOT set any agent to "analyzing" here — agents only enter
+        # "analyzing" when inference actually starts (in agents_decide / live
+        # graph path).  Setting it here caused the stuck-ANALYZING bug.
 
         titles = {
             "dust_storm":    "ALERT: Dust Storm Detected",

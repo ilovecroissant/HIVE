@@ -284,3 +284,60 @@ def test_event_ids_are_unique():
     result = run_graph(make_initial_state(), make_stub_factory())
     ids = [e.id for e in result["events"]]
     assert len(ids) == len(set(ids)), f"Duplicate IDs: {ids}"
+
+
+# ── commander JSON repair ──────────────────────────────────────────────────────
+
+def test_commander_retries_on_malformed_json():
+    """
+    When the commander's first response is not valid JSON, the node must retry
+    once and succeed if the second response is valid.
+    Commander call count must be exactly 2.
+    """
+    _prop_json = (
+        '{"agent_id":"energy","action":"conserve_power",'
+        '"rationale":"Low power.","priority":3}'
+    )
+    _dec_json = (
+        '{"approved_actions":["conserve_power"],'
+        '"rationale":"Energy conservation is critical.","disagreements":[]}'
+    )
+    commander_calls = [0]
+
+    def factory():
+        mock_llm = MagicMock()
+
+        async def ainvoke(messages):
+            system_content = messages[0].content if messages else ""
+            is_commander = "Commander Hayes" in system_content
+            if is_commander:
+                commander_calls[0] += 1
+                resp = MagicMock()
+                # First call → unparseable prose; second (retry) → valid JSON
+                resp.content = "I approve the proposals." if commander_calls[0] == 1 else _dec_json
+                return resp
+            resp = MagicMock()
+            resp.content = _prop_json
+            return resp
+
+        mock_llm.ainvoke = ainvoke
+        return mock_llm
+
+    result = run_graph(make_initial_state(), factory)
+    assert "conserve_power" in result["approved_actions"], "Expected approval after retry"
+    assert commander_calls[0] == 2, f"Expected 2 commander calls, got {commander_calls[0]}"
+
+
+def test_commander_approved_actions_as_string_normalized():
+    """
+    When the model returns approved_actions as a bare string instead of a list,
+    _normalize_commander_data must coerce it so the pipeline still succeeds.
+    """
+    factory = make_stub_factory(
+        decision_json=(
+            '{"approved_actions":"conserve_power",'
+            '"rationale":"OK.","disagreements":[]}'
+        )
+    )
+    result = run_graph(make_initial_state(), factory)
+    assert "conserve_power" in result["approved_actions"]

@@ -1,11 +1,12 @@
 import logging
 import os
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from models import CrisisKind, StateResponse
+from models import AgentEvent, CrisisKind, StateResponse
 from simulator import sim
 
 logging.basicConfig(
@@ -106,8 +107,22 @@ async def agents_decide() -> StateResponse:
         # ainvoke runs specialist nodes concurrently (asyncio.gather internally)
         result = await default_graph.ainvoke(initial)
 
-        sim.apply_effects(result.get("approved_effects") or {})
+        approved_effects = result.get("approved_effects") or {}
+        sim.apply_effects(approved_effects)
         sim.push_events(result.get("events") or [])
+
+        # Emit a deterministic outcome event so the UI can confirm that the
+        # simulator actually applied the commander-approved effects.
+        if approved_effects:
+            parts = [f"{k}: {d:+.1f}" for k, d in sorted(approved_effects.items())]
+            sim.push_events([AgentEvent(
+                id=f"evt-{colony.tick:05d}-sim-outcome",
+                tick=colony.tick,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                type="outcome",
+                title="Colony Resources Updated",
+                message=f"Simulator applied: {', '.join(parts)}",
+            )])
 
         errors = result.get("errors") or []
         actions = result.get("approved_actions") or []
@@ -119,8 +134,6 @@ async def agents_decide() -> StateResponse:
     except Exception as exc:
         # Unexpected graph-level failure (should be rare — nodes catch internally)
         log.exception("agents_decide graph raised unexpectedly: %s", exc)
-        from datetime import datetime, timezone
-        from models import AgentEvent
         err_evt = AgentEvent(
             id=f"evt-{colony.tick:05d}-graph-crash",
             tick=colony.tick,

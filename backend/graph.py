@@ -43,11 +43,12 @@ log = logging.getLogger("hive.graph")
 
 # ── config (all read at import time from env) ─────────────────────────────────
 
-OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "http://localhost:11434/v1")
-OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY",  "ollama")
-HIVE_MODEL      = os.getenv("HIVE_MODEL",       "gpt-4o-mini")
-MAX_TOKENS      = int(os.getenv("HIVE_MAX_TOKENS", "300"))
-TIMEOUT         = float(os.getenv("HIVE_TIMEOUT", "12"))
+OPENAI_API_BASE  = os.getenv("OPENAI_API_BASE",     "http://localhost:11434/v1")
+OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY",      "ollama")
+HIVE_MODEL       = os.getenv("HIVE_MODEL",           "gpt-4o-mini")
+MAX_TOKENS       = int(os.getenv("HIVE_MAX_TOKENS",     "300"))
+CMD_MAX_TOKENS   = int(os.getenv("HIVE_CMD_MAX_TOKENS", "500"))  # higher budget for commander
+TIMEOUT          = float(os.getenv("HIVE_TIMEOUT", "12"))
 
 # ── validated action catalog ──────────────────────────────────────────────────
 
@@ -146,12 +147,12 @@ def _resource_summary(colony: ColonyState) -> str:
     return "\n".join(lines)
 
 
-def _make_llm() -> ChatOpenAI:
+def _make_llm(max_tokens: int | None = None) -> ChatOpenAI:
     return ChatOpenAI(
         model=HIVE_MODEL,
         base_url=OPENAI_API_BASE,
         api_key=OPENAI_API_KEY,
-        max_tokens=MAX_TOKENS,
+        max_tokens=max_tokens or MAX_TOKENS,
         timeout=TIMEOUT,
     )
 
@@ -182,6 +183,29 @@ def _extract_json(text: str) -> dict | None:
         except json.JSONDecodeError:
             pass
     return None
+
+
+def _normalize_commander_data(data: dict) -> dict:
+    """
+    Fix common model JSON quirks in commander output before Pydantic validation.
+    Handles: approved_actions as bare string, null approved_actions, missing fields.
+    """
+    aa = data.get("approved_actions")
+    if isinstance(aa, str):
+        # e.g. "approved_actions": "conserve_power"  (string, not list)
+        data["approved_actions"] = [aa.strip()] if aa.strip() else []
+    elif not isinstance(aa, list):
+        data["approved_actions"] = []
+    # Drop blank or non-string entries
+    data["approved_actions"] = [
+        str(a).strip() for a in data["approved_actions"]
+        if a and str(a).strip()
+    ]
+    if not data.get("rationale"):
+        data["rationale"] = "No rationale provided."
+    if not isinstance(data.get("disagreements"), list):
+        data["disagreements"] = []
+    return data
 
 
 # ── specialist configs ────────────────────────────────────────────────────────
@@ -380,9 +404,24 @@ async def _run_commander_async(
             raise ValueError("Commander model returned empty response")
 
         data = _extract_json(content)
-        if data is None:
-            raise ValueError(f"Cannot parse JSON from commander: {content[:300]}")
 
+        # One repair retry if JSON extraction failed
+        if data is None:
+            log.warning("[commander] JSON parse failed — retrying with stricter prompt. content=%s", content[:120])
+            retry_response = await llm.ainvoke([
+                SystemMessage(
+                    content=system_prompt
+                    + "\n\nCRITICAL: Your ENTIRE response must be ONLY the JSON object."
+                    " No explanation, no markdown. Begin immediately with '{' and end with '}'."
+                ),
+                HumanMessage(content="Output your action plan as raw JSON only."),
+            ])
+            data = _extract_json((retry_response.content or "").strip())
+
+        if data is None:
+            raise ValueError(f"Cannot parse JSON from commander after retry: {content[:200]}")
+
+        data = _normalize_commander_data(data)
         decision = CommanderDecision.model_validate(data)
 
     except Exception as exc:
@@ -473,20 +512,24 @@ def build_graph(make_llm_fn: Optional[LLMFactory] = None):
     Build and compile the HIVE agent graph.
     Inject make_llm_fn to replace the real LLM in tests.
     Use graph.ainvoke() (not invoke) to parallelise specialist nodes.
+    In production, commander gets a higher max_tokens budget than specialists.
     """
-    _lm = make_llm_fn or _make_llm
+    _specialist_lm = make_llm_fn or _make_llm
+    # Commander needs more tokens for rationale + action list; use CMD_MAX_TOKENS
+    # unless a test stub is provided (stubs ignore max_tokens anyway).
+    _commander_lm = make_llm_fn or (lambda: _make_llm(max_tokens=CMD_MAX_TOKENS))
 
     async def energy_node(state: AgentGraphState) -> dict:
-        return await _run_specialist_async("energy", state, _lm)
+        return await _run_specialist_async("energy", state, _specialist_lm)
 
     async def life_support_node(state: AgentGraphState) -> dict:
-        return await _run_specialist_async("life_support", state, _lm)
+        return await _run_specialist_async("life_support", state, _specialist_lm)
 
     async def engineering_node(state: AgentGraphState) -> dict:
-        return await _run_specialist_async("engineering", state, _lm)
+        return await _run_specialist_async("engineering", state, _specialist_lm)
 
     async def commander_node(state: AgentGraphState) -> dict:
-        return await _run_commander_async(state, _lm)
+        return await _run_commander_async(state, _commander_lm)
 
     workflow = StateGraph(AgentGraphState)
     workflow.add_node("energy",       energy_node)
