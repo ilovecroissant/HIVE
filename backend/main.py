@@ -1,6 +1,8 @@
 import logging
 import os
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from threading import Lock
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +16,24 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
 log = logging.getLogger("hive.api")
+
+# The simulator is process-local. Keep its mutations exclusive while inference
+# awaits the model; reads remain available for status polling.
+_mutation_lock = Lock()
+
+
+@contextmanager
+def _mutation_guard():
+    if not _mutation_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="A colony action is already running. Try again after it completes.",
+        )
+    try:
+        yield
+    finally:
+        _mutation_lock.release()
+
 
 # Set HIVE_LIVE_AGENTS=true to route /agents/decide through the LangGraph pipeline.
 # Default (false) uses the deterministic scripted path — safe for tests and demo.
@@ -50,8 +70,9 @@ def get_state() -> StateResponse:
 
 @app.post("/simulation/reset", response_model=StateResponse)
 def reset() -> StateResponse:
-    state, events = sim.reset()
-    return StateResponse(state=state, events=events)
+    with _mutation_guard():
+        state, events = sim.reset()
+        return StateResponse(state=state, events=events)
 
 
 class CrisisRequest(BaseModel):
@@ -60,14 +81,20 @@ class CrisisRequest(BaseModel):
 
 @app.post("/simulation/crisis", response_model=StateResponse)
 def trigger_crisis(req: CrisisRequest) -> StateResponse:
-    state, events = sim.trigger_crisis(req.crisis)
-    return StateResponse(state=state, events=events)
+    with _mutation_guard():
+        state, events = sim.trigger_crisis(req.crisis)
+        return StateResponse(state=state, events=events)
 
 
 # ── agents ────────────────────────────────────────────────────────────────────
 
 @app.post("/agents/decide", response_model=StateResponse)
 async def agents_decide() -> StateResponse:
+    with _mutation_guard():
+        return await _run_agents_decide()
+
+
+async def _run_agents_decide() -> StateResponse:
     """
     Scripted mode (HIVE_LIVE_AGENTS=false):  deterministic simulator decision.
     Live mode   (HIVE_LIVE_AGENTS=true):      LangGraph multi-agent pipeline.
@@ -107,14 +134,29 @@ async def agents_decide() -> StateResponse:
         # ainvoke runs specialist nodes concurrently (asyncio.gather internally)
         result = await default_graph.ainvoke(initial)
 
-        approved_effects = result.get("approved_effects") or {}
-        sim.apply_effects(approved_effects)
         sim.push_events(result.get("events") or [])
+        # Execute action names through the same rules used for feasibility.
+        # Do not trust model/graph-provided numeric effects as executable input.
+        actions = result.get("approved_actions") or []
+        report = sim.execute_actions(actions)
+        actual_effects = report.effects
+        for index, execution in enumerate(report.executions):
+            changes = [f"{r}: {d:+.2f}" for r, d in sorted(execution.resource_changes.items())]
+            changes.extend(
+                f"{m.label} health: {m.before:g} → {m.after:g} (+{m.after - m.before:g})"
+                for m in execution.module_changes
+            )
+            sim.push_events([AgentEvent(
+                id=f"evt-{colony.tick:05d}-executed-{index}", tick=colony.tick,
+                timestamp=datetime.now(timezone.utc).isoformat(), type="outcome",
+                title=f"Executed: {execution.action}",
+                message="; ".join(changes) or "Held position; no resources spent or modules changed.",
+            )])
 
         # Emit a deterministic outcome event so the UI can confirm that the
         # simulator actually applied the commander-approved effects.
-        if approved_effects:
-            parts = [f"{k}: {d:+.1f}" for k, d in sorted(approved_effects.items())]
+        if actual_effects:
+            parts = [f"{k}: {d:+.2f}" for k, d in sorted(actual_effects.items())]
             sim.push_events([AgentEvent(
                 id=f"evt-{colony.tick:05d}-sim-outcome",
                 tick=colony.tick,
@@ -125,7 +167,6 @@ async def agents_decide() -> StateResponse:
             )])
 
         errors = result.get("errors") or []
-        actions = result.get("approved_actions") or []
         log.info(
             "agents_decide DONE tick=%d actions=%s errors=%d",
             colony.tick, actions, len(errors),
@@ -139,7 +180,7 @@ async def agents_decide() -> StateResponse:
             tick=colony.tick,
             timestamp=datetime.now(timezone.utc).isoformat(),
             type="error",
-            title="Graph Execution Failed",
+            title="Decision or Execution Failed",
             message=f"Unexpected error: {type(exc).__name__}: {exc}",
         )
         sim.push_events([err_evt])
@@ -159,5 +200,6 @@ class CommanderRequest(BaseModel):
 
 @app.post("/commander/command", response_model=StateResponse)
 def commander_command(req: CommanderRequest) -> StateResponse:
-    state, events = sim.commander_command(req.instruction)
-    return StateResponse(state=state, events=events)
+    with _mutation_guard():
+        state, events = sim.commander_command(req.instruction)
+        return StateResponse(state=state, events=events)

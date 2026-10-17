@@ -7,7 +7,8 @@ const sites: {id:string;x:number;y:number;w:number;h:number}[]=[
 ];
 export default function MarsMap({modules,crisis}:{modules:Module[];crisis:boolean}){
  const [selected,setSelected]=useState<string|null>("hab1");
- const current=modules.find(m=>m.id===selected);
+ const moduleForSite=(id:string|null)=>modules.find(m=>m.id===id||m.type===({hab1:"habitat",life:"life_support",green:"greenhouse"} as Record<string,string>)[id||""]);
+ const current=moduleForSite(selected);
  return <div className="map-wrap">
  <div className="map-overlay"><span className="tiny-label">OLYMPUS MONS • SECTOR 07</span><span className="coordinate">18°39′N 226°12′E</span></div>
  <svg className="mars-map" viewBox="0 0 700 500" role="img" aria-label="Interactive isometric Mars colony layout">
@@ -24,7 +25,7 @@ export default function MarsMap({modules,crisis}:{modules:Module[];crisis:boolea
  <path d="M138 293 L268 232 L443 204 L573 270 L482 335 L289 389 L138 293Z" fill="#a5624d" fillOpacity=".08" stroke="#d28a62" strokeOpacity=".35" strokeWidth="2" strokeDasharray="7 7"/>
  <path d="M288 245 L450 182 M288 245 L150 276 M288 245 L295 372 M288 245 L481 321 M450 182 L580 264" stroke="#f1ad78" strokeOpacity=".28" strokeWidth="9"/>
  <path d="M288 245 L450 182 M288 245 L150 276 M288 245 L295 372 M288 245 L481 321 M450 182 L580 264" stroke="#ffe0a7" strokeOpacity=".35" strokeWidth="2" strokeDasharray="6 7"/>
- {sites.map(s=>{const m=modules.find(item=>item.id===s.id);const active=selected===s.id;const affected=crisis&&(s.id==="solar"||s.id==="life");return <g key={s.id} role="button" tabIndex={0} aria-label={`Select ${m?.label || s.id}`} onClick={()=>setSelected(s.id)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(s.id);}}} className="map-site" transform={`translate(${s.x} ${s.y})`}>
+ {sites.map(s=>{const m=moduleForSite(s.id);const active=selected===s.id;const affected=crisis&&(s.id==="solar"||s.id==="life");return <g key={s.id} role="button" tabIndex={0} aria-label={`Select ${m?.label || s.id}`} onClick={()=>setSelected(s.id)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(s.id);}}} className="map-site" transform={`translate(${s.x} ${s.y})`}>
  <ellipse cx={s.w/2} cy={s.h*.82} rx={s.w*.55} ry={s.h*.35} fill="#000" opacity=".35"/>
  {s.id==="solar"?<g><path d="M2 19 L87 0 L118 20 L29 42 Z" fill="#183b58" stroke="#65a1bd" strokeWidth="2"/><path d="M24 16 L51 34 M45 11 L73 30 M66 6 L95 25 M17 27 L104 13" stroke="#7cb5d1" opacity=".6"/><path d="M45 38 L45 51 M81 31 L81 49" stroke="#7a7c80" strokeWidth="4"/></g>:s.id==="comms"?<g><path d="M33 49 L30 6 L14 46" stroke="#9eb4bb" strokeWidth="4" fill="none"/><ellipse cx="30" cy="14" rx="24" ry="11" transform="rotate(-29 30 14)" fill="#365469" stroke="#9bb8c6" strokeWidth="2"/><circle cx="33" cy="13" r="4" fill="#f4ad71"/></g>:s.id==="reactor"?<g><path d="M10 22 L54 2 L88 20 L43 44Z" fill="#365264" stroke="#8bafb8" strokeWidth="2"/><path d="M10 22 V42 L43 58 V44 M43 58 L88 36 V20" fill="#233847" stroke="#7293a6" strokeWidth="2"/><rect x="39" y="21" width="13" height="20" fill="#f6a769" opacity=".8"/></g>:<g><rect x="7" y="32" width={s.w-14} height={s.h-30} rx="7" fill="#304653" stroke="#6d8e9a" strokeWidth="2"/><path d={`M8 33 Q${s.w/2} -23 ${s.w-8} 33 Z`} fill="url(#dome)" stroke="#8db6bf" strokeWidth="2"/><path d={`M${s.w/2} 1 V34 M20 23 H${s.w-20}`} stroke="#8fbdc5" opacity=".55"/><rect x={s.w/2-11} y={s.h-20} width="22" height="10" rx="2" fill="#f4ae72" opacity=".7"/></g>}
  {active&&<ellipse cx={s.w/2} cy={s.h*.76} rx={s.w*.6} ry={s.h*.57} fill="none" stroke="#f9b374" strokeWidth="2" strokeDasharray="5 5"/>}

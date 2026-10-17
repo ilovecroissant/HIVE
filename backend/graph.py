@@ -15,9 +15,8 @@ Key design decisions
 • We call llm.ainvoke() directly and parse JSON manually instead of using
   with_structured_output(), because json_mode + explicit schema in the prompt
   is the most compatible path for vLLM-served smaller models (Qwen, Mistral, etc.).
-• TIMEOUT is intentionally short (12 s) so a dead model is detected in ≤24 s
-  across all three concurrent specialist calls.
-• No retry — fail fast and emit an error event so the UI can react.
+• TIMEOUT defaults to 12 s per model request; SDK transport retries may extend it.
+• Commander gets one JSON repair retry; failures emit error events.
 • All exceptions are caught inside node functions; the graph always completes.
 """
 from __future__ import annotations
@@ -29,6 +28,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from itertools import combinations
 from typing import Annotated, Callable, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -38,6 +38,10 @@ from pydantic import BaseModel, Field, ValidationError
 from typing_extensions import TypedDict
 
 from models import AgentEvent, AgentId, ColonyState
+from actions import (
+    VALID_ACTIONS, VALID_ACTION_LIST, validate_action,
+    Conflict, SCORE_WEIGHTS, describe_action, detect_conflicts, evaluate_plan, format_assessment,
+)
 
 log = logging.getLogger("hive.graph")
 
@@ -52,37 +56,6 @@ TIMEOUT          = float(os.getenv("HIVE_TIMEOUT", "12"))
 
 # ── validated action catalog ──────────────────────────────────────────────────
 
-VALID_ACTIONS: dict[str, dict[str, float]] = {
-    "boost_oxygen":          {"oxygen":  10.0, "water": -4.0, "power": -1.0},
-    "conserve_power":        {"power":    5.0, "fuel":  -2.0},
-    "battery_reserves":      {"power":    1.0, "fuel":  -0.5},
-    "boost_water_recycling": {"water":    5.0, "power": -1.5},
-    "ration_food":           {"food":     5.0},
-    "repair_module":         {"fuel":    -3.0},
-    "emergency_power":       {"power":    6.0, "fuel":  -3.0},
-    "greenhouse_optimize":   {"food":     4.0, "power": -1.0},
-    "idle":                  {},
-}
-VALID_ACTION_LIST = ", ".join(VALID_ACTIONS)
-
-
-def validate_action(
-    action: str,
-    resources: dict[str, float],
-) -> tuple[bool, str, dict[str, float]]:
-    """Return (ok, reason, effects). Checks catalog membership and resource floor."""
-    if action not in VALID_ACTIONS:
-        return False, f"Unknown action '{action}' — not in catalog", {}
-    effects = VALID_ACTIONS[action]
-    for res, delta in effects.items():
-        if delta < 0 and resources.get(res, 0.0) + delta < 0:
-            return False, (
-                f"Insufficient {res} ({resources.get(res, 0):.1f}) "
-                f"for '{action}' (needs {-delta:.1f})"
-            ), {}
-    return True, "ok", effects
-
-
 # ── Pydantic schemas (for validation only — LLM output is parsed manually) ───
 
 class Proposal(BaseModel):
@@ -90,12 +63,15 @@ class Proposal(BaseModel):
     action:   str  = Field(description=f"Exactly one of: {VALID_ACTION_LIST}")
     rationale:str  = Field(description="1-2 sentence explanation")
     priority: int  = Field(ge=1, le=5, description="1=low … 5=critical")
+    # Filled from simulator rules after parsing, never from LLM estimates.
+    assessment: dict = Field(default_factory=dict)
 
 
 class CommanderDecision(BaseModel):
-    approved_actions: list[str] = Field(default_factory=list)
+    approved_actions: list[str] = Field(default_factory=list, max_length=len(VALID_ACTIONS))
     rationale:        str       = Field(description="Why these actions were chosen")
     disagreements:    list[str] = Field(default_factory=list)
+    rejection_reasons: dict[str, str] = Field(default_factory=dict)
 
 
 # ── LangGraph shared state ────────────────────────────────────────────────────
@@ -108,6 +84,7 @@ class AgentGraphState(TypedDict):
     # Written once by commander; no reducer needed
     approved_effects: dict[str, float]
     approved_actions: list[str]
+    conflicts: list[Conflict]
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -147,6 +124,11 @@ def _resource_summary(colony: ColonyState) -> str:
     return "\n".join(lines)
 
 
+def _action_context(colony: ColonyState, actions: list[str]) -> str:
+    resources = {k: r.value for k, r in colony.resources.items()}
+    return json.dumps({a: describe_action(a, resources, colony.modules) for a in actions}, separators=(",", ":"))
+
+
 def _make_llm(max_tokens: int | None = None) -> ChatOpenAI:
     return ChatOpenAI(
         model=HIVE_MODEL,
@@ -165,7 +147,8 @@ def _extract_json(text: str) -> dict | None:
     text = text.strip()
     # 1. Direct parse
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
         pass
     # 2. Code-fenced block
@@ -205,6 +188,8 @@ def _normalize_commander_data(data: dict) -> dict:
         data["rationale"] = "No rationale provided."
     if not isinstance(data.get("disagreements"), list):
         data["disagreements"] = []
+    if data.get("rejection_reasons") is None:
+        data["rejection_reasons"] = {}
     return data
 
 
@@ -260,7 +245,11 @@ async def _run_specialist_async(
         f"Colony status:\n{_resource_summary(colony)}\n"
         f"Active crisis: {colony.active_crisis or 'none'}\n"
         f"Survival score: {colony.survival_score}\n\n"
+        f"Module health: {', '.join(f'{m.label}={m.health:g}' for m in colony.modules)}\n"
         f"Preferred actions for your role: {', '.join(cfg['preferred'])}\n\n"
+        f"Simulator estimates for your actions and idle: {_action_context(colony, cfg['preferred'] + ['idle'])}\n"
+        "Choose a feasible action for current needs; idle if no useful work is safe. "
+        "Explain the benefit and tradeoff briefly. Do not invent effects or costs.\n"
         "RESPOND WITH ONLY VALID JSON — no markdown, no explanation, nothing else.\n"
         "Required format (replace values appropriately):\n"
         '{"agent_id":"' + agent_id + '",'
@@ -300,10 +289,14 @@ async def _run_specialist_async(
             proposal.action = "idle"
             proposal.rationale += " [action corrected to idle — unknown value returned]"
 
+        proposal.assessment = describe_action(
+            proposal.action, {k: r.value for k, r in colony.resources.items()}, colony.modules,
+        )
+
         events_out.append(_event(
             tick, f"proposal-{agent_id}", "proposal",
             f"{cfg['name']} Proposes: {proposal.action}",
-            proposal.rationale,
+            f"Priority {proposal.priority}/5. {proposal.rationale} Simulator estimate: " + format_assessment(proposal.assessment),
             agent_id=agent_id,  # type: ignore[arg-type]
         ))
         log.info("[%s] node DONE %.2fs action=%s priority=%d",
@@ -358,6 +351,26 @@ async def _run_commander_async(
         ))
         return {"events": events_out, "approved_effects": {}, "approved_actions": []}
 
+    resources = {k: r.value for k, r in colony.resources.items()}
+    proposed = list(dict.fromkeys(p.action for p in proposals))
+    conflicts = detect_conflicts([p.action for p in proposals], resources, colony.modules)
+    for index, conflict in enumerate(conflicts):
+        events_out.append(_event(
+            tick, f"conflict-{index}", "disagreement", f"Conflict: {', '.join(conflict.actions)}",
+            f"Constraint {conflict.constraint}: {conflict.explanation}",
+        ))
+    feasible_subsets = []
+    for size in range(1, len(proposed) + 1):
+        for subset in combinations(proposed, size):
+            preview = evaluate_plan(list(subset), resources, colony.modules)
+            if preview.feasible:
+                feasible_subsets.append({
+                    "actions": subset,
+                    "survival_delta": round(sum(SCORE_WEIGHTS[r] * d for r, d in preview.effects.items()), 2),
+                    "lowest_essential_reserve": round(min(
+                        resources[r] + preview.effects.get(r, 0) for r in ("oxygen", "power", "water", "food")
+                    ), 2),
+                })
     summary = "\n".join(
         f"- {p.agent_id}: action={p.action}, priority={p.priority}, rationale={p.rationale}"
         for p in proposals
@@ -368,13 +381,25 @@ async def _run_commander_async(
         f"Colony status:\n{_resource_summary(colony)}\n"
         f"Active crisis: {colony.active_crisis or 'none'}\n"
         f"Survival score: {colony.survival_score}\n\n"
+        f"Module health: {', '.join(f'{m.label}={m.health:g}' for m in colony.modules)}\n"
         f"Specialist proposals:\n{summary}\n\n"
-        f"Valid actions: {VALID_ACTION_LIST}\n\n"
+        f"Simulator estimates: {_action_context(colony, proposed)}\n"
+        f"Detected conflicts: {json.dumps([c.model_dump() for c in conflicts], separators=(',', ':'))}\n"
+        f"Feasible subsets: {json.dumps(feasible_subsets, separators=(',', ':'))}\n"
+        "Choose ONLY proposed actions. Compare urgency, lowest life-critical reserves, "
+        "crisis, module health and survival-score impact; do not merely approve every proposal. "
+        "Stabilize the lowest essential reserves before optional maintenance; compare the feasible subsets. "
+        "Do not call a rejected action unaffordable if it fits alongside your selected actions. "
+        "Reserve all costs from starting balances; gains cannot fund this cycle. "
+        "Battery and emergency power are exclusive backup-controller modes. "
+        "Select idle alone, or [] to hold. Explain each rejection with an action-keyed reason. "
+        "Use short public decision summaries, not step-by-step private reasoning.\n\n"
         "RESPOND WITH ONLY VALID JSON — no markdown, no explanation, nothing else.\n"
         "Required format:\n"
         '{"approved_actions":["<action1>","<action2>"],'
         '"rationale":"<1-2 sentence reason>",'
-        '"disagreements":["<reason if any rejected>"]}'
+        '"rejection_reasons":{"<rejected_action>":"<short reason>"},'
+        '"disagreements":[]}'
         "\napproved_actions may be empty [] if no action is safe to take."
     )
 
@@ -400,29 +425,41 @@ async def _run_commander_async(
         content = (response.content or "").strip()
         log.info("[commander] inference DONE %.2fs content_len=%d", elapsed, len(content))
 
-        if not content:
-            raise ValueError("Commander model returned empty response")
-
-        data = _extract_json(content)
-
-        # One repair retry if JSON extraction failed
-        if data is None:
-            log.warning("[commander] JSON parse failed — retrying with stricter prompt. content=%s", content[:120])
-            retry_response = await llm.ainvoke([
-                SystemMessage(
-                    content=system_prompt
-                    + "\n\nCRITICAL: Your ENTIRE response must be ONLY the JSON object."
-                    " No explanation, no markdown. Begin immediately with '{' and end with '}'."
-                ),
-                HumanMessage(content="Output your action plan as raw JSON only."),
-            ])
-            data = _extract_json((retry_response.content or "").strip())
-
-        if data is None:
-            raise ValueError(f"Cannot parse JSON from commander after retry: {content[:200]}")
-
-        data = _normalize_commander_data(data)
-        decision = CommanderDecision.model_validate(data)
+        # One repair attempt for empty, malformed, or schema-invalid JSON.
+        for attempt in range(2):
+            try:
+                data = _extract_json(content)
+                if data is None:
+                    raise ValueError(f"Expected a JSON object: {content[:200]}")
+                decision = CommanderDecision.model_validate(_normalize_commander_data(data))
+                selected = list(dict.fromkeys(decision.approved_actions))
+                unproposed = [a for a in selected if a not in proposed]
+                preview = evaluate_plan(selected, resources, colony.modules)
+                if not attempt and (unproposed or not preview.feasible):
+                    reasons = [c.explanation for c in preview.conflicts]
+                    if unproposed:
+                        reasons.append(f"Actions not proposed: {unproposed}")
+                    raise ValueError("Infeasible plan: " + "; ".join(reasons))
+                break
+            except (ValueError, TypeError) as exc:
+                if attempt:
+                    raise
+                log.warning("[commander] Invalid decision — retrying with stricter prompt")
+                events_out.append(_event(
+                    tick, "commander-retry", "system", "Commander Plan Requires Revision",
+                    f"Validation rejected the first response: {str(exc)[:500]}. Requesting one corrected plan.",
+                    agent_id="commander",
+                ))
+                retry_response = await llm.ainvoke([
+                    SystemMessage(
+                        content=system_prompt
+                        + "\n\nCRITICAL: Your ENTIRE response must be ONLY the JSON object."
+                        " Follow the required field types exactly. No explanation, no markdown."
+                        " Begin immediately with '{' and end with '}'."
+                    ),
+                    HumanMessage(content=f"Correct this validation failure: {str(exc)[:600]}. Output a feasible subset as raw JSON only."),
+                ])
+                content = (retry_response.content or "").strip()
 
     except Exception as exc:
         elapsed = time.monotonic() - t0
@@ -435,34 +472,36 @@ async def _run_commander_async(
         ))
         return {
             "events": events_out, "errors": [err_msg],
-            "approved_effects": {}, "approved_actions": [],
+            "approved_effects": {}, "approved_actions": [], "conflicts": conflicts,
         }
 
     # Validate approved actions against deterministic simulation rules
-    resources_snap = {k: r.value for k, r in colony.resources.items()}
     applied:  list[str]        = []
-    rejected: list[str]        = []
-    cumulative: dict[str, float] = {}
+    rejected: dict[str, str]   = {}
 
-    for action in decision.approved_actions:
-        ok, reason, effects = validate_action(action, resources_snap)
-        if ok:
+    # A plan selects actions; repeating a name must not multiply its effects.
+    for action in dict.fromkeys(decision.approved_actions):
+        preview = evaluate_plan(applied + [action], resources, colony.modules)
+        if action not in proposed:
+            rejected[action] = "Action was not proposed by a specialist."
+        elif preview.feasible:
             applied.append(action)
-            for res, delta in effects.items():
-                resources_snap[res] = max(0.0, resources_snap.get(res, 0.0) + delta)
-                cumulative[res]     = cumulative.get(res, 0.0) + delta
         else:
-            rejected.append(f"{action}: {reason}")
-            log.warning("[commander] validation rejected '%s': %s", action, reason)
+            rejected[action] = "; ".join(c.explanation for c in preview.conflicts)
 
     # Disagreement events for proposals not approved
     approved_set = set(applied)
     for p in proposals:
         if p.action not in approved_set:
-            reject_reason = next(
-                (r for r in rejected if r.startswith(p.action)),
-                f"{p.agent_id}'s '{p.action}' not selected by Commander",
-            )
+            feasibility = evaluate_plan(applied + [p.action], resources, colony.modules)
+            constraint_reasons = "; ".join(c.explanation for c in feasibility.conflicts)
+            reject_reason = rejected.get(p.action) or constraint_reasons
+            if not reject_reason:
+                stated_reason = decision.rejection_reasons.get(p.action) or decision.rationale
+                reject_reason = (
+                    "Deterministic check: feasible with the chosen plan; Commander chose not to select it. "
+                    f"Commander's stated preference: {stated_reason}"
+                )
             events_out.append(_event(
                 tick, f"disagree-{p.agent_id}", "disagreement",
                 f"Commander Rejects: {p.action}", reject_reason,
@@ -473,14 +512,17 @@ async def _run_commander_async(
         events_out.append(_event(
             tick, "validation-reject", "system",
             f"{len(rejected)} Action(s) Failed Validation",
-            "; ".join(rejected),
+            "; ".join(f"{action}: {reason}" for action, reason in rejected.items()),
         ))
 
     if applied:
         events_out.append(_event(
             tick, "commander-decision", "decision",
             f"Commander Approves: {', '.join(applied)}",
-            decision.rationale,
+            decision.rationale + (
+                " Deterministic validation removed unsafe/unproposed actions: " + ", ".join(rejected)
+                if rejected else " All selected actions passed deterministic validation."
+            ),
             agent_id="commander",
         ))
         log.info("[commander] node DONE %.2fs approved=%s",
@@ -497,8 +539,9 @@ async def _run_commander_async(
     return {
         "events": events_out,
         "errors": [],
-        "approved_effects": cumulative,
+        "approved_effects": evaluate_plan(applied, resources, colony.modules).effects,
         "approved_actions": applied,
+        "conflicts": conflicts,
     }
 
 

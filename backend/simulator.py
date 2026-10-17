@@ -14,6 +14,7 @@ from models import (
     Agent, AgentEvent, AgentId, AgentStatus, ColonyState,
     CrisisKind, Module, Resource,
 )
+from actions import PlanEvaluation, REPAIR_HEALTH, SCORE_WEIGHTS, evaluate_plan
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
@@ -237,8 +238,7 @@ class Simulator:
         )
 
     def _compute_score(self) -> float:
-        weights = {"oxygen": 0.35, "power": 0.25, "water": 0.20, "food": 0.10, "fuel": 0.10}
-        return _clamp(sum(self._resources[k] * w for k, w in weights.items()))
+        return _clamp(sum(self._resources[k] * w for k, w in SCORE_WEIGHTS.items()))
 
     def _build_decisions(self) -> dict[str, tuple]:
         r = self._resources
@@ -299,7 +299,7 @@ class Simulator:
                 f"Dispatching repair drone to {worst.label} (health {worst.health:.0f}%). ETA 2 h. Fuel cost: 3 units.",
                 {"fuel": -3.0},
             )
-            worst.health = _clamp(worst.health + 6.0)
+            worst.health = _clamp(worst.health + REPAIR_HEALTH)
         else:
             decisions["engineering"] = (
                 "analyzing", "outcome",
@@ -346,7 +346,7 @@ class Simulator:
         self._events.append(evt)
         return evt
 
-    def _recent_events(self, n: int = 20) -> list[AgentEvent]:
+    def _recent_events(self, n: int = 100) -> list[AgentEvent]:
         return self._events[-n:]
 
     def _set_status(self, agent_id: AgentId, status: AgentStatus) -> None:
@@ -367,8 +367,26 @@ class Simulator:
     def snapshot(self) -> ColonyState:
         return self._snapshot()
 
-    def apply_effects(self, effects: dict[str, float]) -> None:
+    def apply_effects(self, effects: dict[str, float]) -> dict[str, float]:
+        before = dict(self._resources)
         self._apply_deltas(effects)
+        return {key: self._resources[key] - before[key] for key in effects}
+
+    def execute_actions(self, actions: list[str]) -> PlanEvaluation:
+        """Revalidate against exact balances, then commit all changes atomically."""
+        report = evaluate_plan(actions, self._resources, self._modules)
+        if not report.feasible:
+            raise ValueError("Plan rejected at execution: " + "; ".join(c.explanation for c in report.conflicts))
+        resources = dict(self._resources)
+        modules = [m.model_copy(deep=True) for m in self._modules]
+        for execution in report.executions:
+            for resource, delta in execution.resource_changes.items():
+                resources[resource] = _clamp(resources[resource] + delta)
+            for change in execution.module_changes:
+                next(m for m in modules if m.id == change.id).health = change.after
+        self._resources = resources
+        self._modules = modules
+        return report
 
     def push_events(self, events: list[AgentEvent]) -> None:
         self._events.extend(events)

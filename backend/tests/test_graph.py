@@ -11,7 +11,7 @@ Coverage:
 - Model failure → error events, no resource changes
 - Commander blocked when specialist fails
 - JSON extraction helper (_extract_json)
-- Agent statuses reset after model failure (regression for stuck-ANALYZING bug)
+- Live API status cleanup is covered separately in test_live_api.py
 """
 import sys, os, asyncio
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -341,3 +341,72 @@ def test_commander_approved_actions_as_string_normalized():
     )
     result = run_graph(make_initial_state(), factory)
     assert "conserve_power" in result["approved_actions"]
+
+
+@pytest.mark.parametrize("bad_content", ["", "[]", '{"rationale":42}'])
+def test_commander_repairs_empty_nonobject_and_invalid_schema(bad_content):
+    calls = []
+    base_factory = make_stub_factory()
+
+    def factory():
+        llm = base_factory()
+        original = llm.ainvoke
+
+        async def invoke(messages):
+            if "Commander Hayes" in messages[0].content:
+                calls.append(messages)
+                if len(calls) == 1:
+                    return MagicMock(content=bad_content)
+            return await original(messages)
+
+        llm.ainvoke = invoke
+        return llm
+
+    result = run_graph(make_initial_state(), factory)
+    assert result["approved_actions"] == ["conserve_power"]
+    assert len(calls) == 2
+
+
+def test_commander_duplicate_action_applied_once():
+    factory = make_stub_factory(decision_json=(
+        '{"approved_actions":["conserve_power","conserve_power"],'
+        '"rationale":"Preserve power."}'
+    ))
+    result = run_graph(make_initial_state(), factory)
+    assert result["approved_actions"] == ["conserve_power"]
+    assert result["approved_effects"] == VALID_ACTIONS["conserve_power"]
+    assert any(c.constraint == "duplicate_action" for c in result["conflicts"])
+
+
+def test_commander_checks_combined_resource_cost():
+    factory = make_stub_factory(decision_json=(
+        '{"approved_actions":["conserve_power","emergency_power"],'
+        '"rationale":"Preserve power."}'
+    ))
+    result = run_graph(make_initial_state(make_colony(resources={"fuel": 4})), factory)
+    assert result["approved_actions"] == ["conserve_power"]
+    assert result["approved_effects"]["fuel"] == -2
+
+
+def test_commander_stops_after_one_unsuccessful_repair():
+    calls = []
+    base_factory = make_stub_factory()
+
+    def factory():
+        llm = base_factory()
+        original = llm.ainvoke
+
+        async def invoke(messages):
+            if "Commander Hayes" in messages[0].content:
+                calls.append(messages)
+                return MagicMock(content="not JSON")
+            return await original(messages)
+
+        llm.ainvoke = invoke
+        return llm
+
+    result = run_graph(make_initial_state(), factory)
+    assert len(calls) == 2
+    assert result["approved_actions"] == []
+    assert result["approved_effects"] == {}
+    assert result["errors"]
