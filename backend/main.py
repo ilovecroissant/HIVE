@@ -38,9 +38,19 @@ def _mutation_guard():
 # Set HIVE_LIVE_AGENTS=true to route /agents/decide through the LangGraph pipeline.
 # Default (false) uses the deterministic scripted path — safe for tests and demo.
 LIVE_AGENTS = os.getenv("HIVE_LIVE_AGENTS", "false").lower() == "true"
+GRAPH_VERSION = os.getenv("HIVE_GRAPH_VERSION", "v1")
+if GRAPH_VERSION not in ("v1", "v2"):
+    raise ValueError(f"Unknown graph version: {GRAPH_VERSION}")
 
 if LIVE_AGENTS:
     from graph import default_graph, AgentGraphState
+    if GRAPH_VERSION == "v2":
+        from efficient_graph import build_efficient_graph
+        default_graph = build_efficient_graph(
+            routing=os.getenv("HIVE_SPECIALIST_ROUTING", "true").lower() == "true",
+            horizon=int(os.getenv("HIVE_PLANNING_HORIZON", "3")),
+            physics_version=sim.physics_version, status_hook=sim._set_status,
+        )
     log.info("Live agent mode enabled. Graph loaded.")
 
 app = FastAPI(title="HIVE Mars Colony API", version="0.1.0")
@@ -117,7 +127,7 @@ async def _run_agents_decide() -> StateResponse:
     # sees activity before the graph completes (FastAPI runs this in an async
     # context so GET /simulation/state can be served concurrently).
     for aid in ("energy", "life_support", "engineering", "commander"):
-        sim._set_status(aid, "analyzing")  # type: ignore[attr-defined]
+        sim._set_status(aid, "analyzing" if GRAPH_VERSION == "v1" else "idle")  # type: ignore[attr-defined]
 
     log.info("agents_decide START tick=%d crisis=%s", colony.tick, colony.active_crisis)
 

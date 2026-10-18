@@ -1,0 +1,14 @@
+{
+  "episodes": 24,
+  "matched_pairs": 12,
+  "state_hashes_match": true,
+  "source_hashes_match": true,
+  "deterministic_execution_replay_matches": true,
+  "csv_trace_metrics_match": true,
+  "usage_complete": true,
+  "scored_model_calls": 184,
+  "scored_total_tokens": 266571,
+  "output_limit_finishes": 0,
+  "warmup_calls": 1,
+  "warmup_tokens": 32
+}

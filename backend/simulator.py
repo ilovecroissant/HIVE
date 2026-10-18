@@ -5,6 +5,7 @@ State is process-local (in-memory singleton).
 """
 from __future__ import annotations
 
+import os
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -59,7 +60,11 @@ def _evt_id(tick: int, tag: str) -> str:
 # ── simulator ─────────────────────────────────────────────────────────────────
 
 class Simulator:
-    def __init__(self) -> None:
+    def __init__(self, physics_version: str = "v1") -> None:
+        if physics_version not in ("v1", "v2"):
+            raise ValueError(f"Unknown physics version: {physics_version}")
+        self.physics_version = physics_version
+        self.score_version = "resource_v1"
         self.reset()
 
     # ── public API ────────────────────────────────────────────────────────────
@@ -208,7 +213,18 @@ class Simulator:
         for k, r in BASE_REGEN.items():
             if k == "power" and self._active_crisis == "power_failure":
                 continue
-            self._resources[k] = _clamp(self._resources[k] + r)
+            self._resources[k] = _clamp(self._resources[k] + self.regeneration(k))
+
+    def regeneration(self, resource: str) -> float:
+        """v2 derates existing production; v1 preserves the original arithmetic."""
+        if self.physics_version == "v1":
+            return BASE_REGEN.get(resource, 0.0)
+        health = {m.type: m.health / 100 for m in self._modules}
+        if resource == "power":
+            # Nominal 0.30 units/hour: solar 0.20, reactor 0.10.
+            return .20 * health.get("solar", 0) + .10 * health.get("reactor", 0)
+        module_type = {"water": "life_support", "food": "greenhouse"}.get(resource)
+        return BASE_REGEN.get(resource, 0.0) * health.get(module_type, 0)
 
     def _apply_deltas(self, deltas: dict[str, float]) -> None:
         for k, d in deltas.items():
@@ -399,4 +415,4 @@ class Simulator:
 
 
 # Process-local singleton
-sim = Simulator()
+sim = Simulator(physics_version=os.getenv("HIVE_PHYSICS_VERSION", "v1"))

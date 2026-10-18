@@ -1,0 +1,291 @@
+{
+  "started_at": "2026-10-17T23:15:09.335199+00:00",
+  "command": "/home/jasonnguyen/projects/hive/backend/.venv/bin/python backend/benchmark.py --base-url http://127.0.0.1:8001/v1 --model Qwen/Qwen2.5-7B-Instruct --steps 3 --repetitions 3 --seed 20261017 --output-dir backend/benchmark_results/qwen_20261017",
+  "config": {
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "base_url": "http://127.0.0.1:8001/v1",
+    "steps": 3,
+    "repetitions": 3,
+    "seed": 20261017,
+    "temperature": 0.2,
+    "planner_tokens": 500,
+    "specialist_tokens": 300,
+    "timeout": 12.0,
+    "output_dir": "backend/benchmark_results/qwen_20261017"
+  },
+  "scenarios": [
+    {
+      "name": "dust_storm",
+      "crisis": "dust_storm",
+      "resources": {
+        "oxygen": 55,
+        "power": 28,
+        "water": 55,
+        "food": 60,
+        "fuel": 18
+      },
+      "damaged_module": "solar",
+      "health": 65
+    },
+    {
+      "name": "power_failure",
+      "crisis": "power_failure",
+      "resources": {
+        "oxygen": 60,
+        "power": 30,
+        "water": 55,
+        "food": 60,
+        "fuel": 20
+      },
+      "damaged_module": "reactor",
+      "health": 65
+    },
+    {
+      "name": "oxygen_leak",
+      "crisis": "oxygen_leak",
+      "resources": {
+        "oxygen": 28,
+        "power": 50,
+        "water": 35,
+        "food": 60,
+        "fuel": 18
+      },
+      "damaged_module": "life_support",
+      "health": 65
+    },
+    {
+      "name": "scarce_fuel",
+      "crisis": "dust_storm",
+      "resources": {
+        "oxygen": 36,
+        "power": 30,
+        "water": 40,
+        "food": 60,
+        "fuel": 5.4
+      },
+      "damaged_module": "comms",
+      "health": 45
+    }
+  ],
+  "recovery_thresholds": {
+    "oxygen": 40.0,
+    "power": 30.0,
+    "water": 20.0,
+    "food": 20.0
+  },
+  "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+  "package_versions": {
+    "langgraph": "1.2.16",
+    "langchain-openai": "1.7.2",
+    "openai": "3.33.0",
+    "pydantic": "2.14.1"
+  },
+  "source_sha256": {
+    "benchmark.py": "4bdcec0a26a73e953443393ca0ceed31e4caf2840378f40ecdad279c863259f0",
+    "single_agent.py": "7861eb6f89910c9fd50248732679863cc840ee230b64997adf70452e084db006",
+    "actions.py": "081901ff7a80db609d7572ebac86d0760309f80f08f890208652e3158c961748",
+    "graph.py": "45bf3116aa6084e75fc9f6991dfbe8a58ea1f02dac8fcdc2ebd46928da4d7130",
+    "simulator.py": "c04ea2d1e85ad708f9411e804e36423883dff12342e75d554e06d4c801b6105b",
+    "models.py": "9f8b619da6166e051099083d17271efc23c61fc51ed4e5f9c7f4f0aecfba3f1a"
+  },
+  "git_head": "4c561bfab29ce0cd581253b7931a9f9b474dd767",
+  "schedule": [
+    {
+      "scenario": "dust_storm",
+      "repetition": 1,
+      "seed": 20261117,
+      "approach": "single"
+    },
+    {
+      "scenario": "dust_storm",
+      "repetition": 1,
+      "seed": 20261117,
+      "approach": "multi"
+    },
+    {
+      "scenario": "dust_storm",
+      "repetition": 2,
+      "seed": 20261217,
+      "approach": "multi"
+    },
+    {
+      "scenario": "dust_storm",
+      "repetition": 2,
+      "seed": 20261217,
+      "approach": "single"
+    },
+    {
+      "scenario": "dust_storm",
+      "repetition": 3,
+      "seed": 20261317,
+      "approach": "single"
+    },
+    {
+      "scenario": "dust_storm",
+      "repetition": 3,
+      "seed": 20261317,
+      "approach": "multi"
+    },
+    {
+      "scenario": "power_failure",
+      "repetition": 1,
+      "seed": 20262117,
+      "approach": "multi"
+    },
+    {
+      "scenario": "power_failure",
+      "repetition": 1,
+      "seed": 20262117,
+      "approach": "single"
+    },
+    {
+      "scenario": "power_failure",
+      "repetition": 2,
+      "seed": 20262217,
+      "approach": "single"
+    },
+    {
+      "scenario": "power_failure",
+      "repetition": 2,
+      "seed": 20262217,
+      "approach": "multi"
+    },
+    {
+      "scenario": "power_failure",
+      "repetition": 3,
+      "seed": 20262317,
+      "approach": "multi"
+    },
+    {
+      "scenario": "power_failure",
+      "repetition": 3,
+      "seed": 20262317,
+      "approach": "single"
+    },
+    {
+      "scenario": "oxygen_leak",
+      "repetition": 1,
+      "seed": 20263117,
+      "approach": "single"
+    },
+    {
+      "scenario": "oxygen_leak",
+      "repetition": 1,
+      "seed": 20263117,
+      "approach": "multi"
+    },
+    {
+      "scenario": "oxygen_leak",
+      "repetition": 2,
+      "seed": 20263217,
+      "approach": "multi"
+    },
+    {
+      "scenario": "oxygen_leak",
+      "repetition": 2,
+      "seed": 20263217,
+      "approach": "single"
+    },
+    {
+      "scenario": "oxygen_leak",
+      "repetition": 3,
+      "seed": 20263317,
+      "approach": "single"
+    },
+    {
+      "scenario": "oxygen_leak",
+      "repetition": 3,
+      "seed": 20263317,
+      "approach": "multi"
+    },
+    {
+      "scenario": "scarce_fuel",
+      "repetition": 1,
+      "seed": 20264117,
+      "approach": "multi"
+    },
+    {
+      "scenario": "scarce_fuel",
+      "repetition": 1,
+      "seed": 20264117,
+      "approach": "single"
+    },
+    {
+      "scenario": "scarce_fuel",
+      "repetition": 2,
+      "seed": 20264217,
+      "approach": "single"
+    },
+    {
+      "scenario": "scarce_fuel",
+      "repetition": 2,
+      "seed": 20264217,
+      "approach": "multi"
+    },
+    {
+      "scenario": "scarce_fuel",
+      "repetition": 3,
+      "seed": 20264317,
+      "approach": "multi"
+    },
+    {
+      "scenario": "scarce_fuel",
+      "repetition": 3,
+      "seed": 20264317,
+      "approach": "single"
+    }
+  ],
+  "warmup": [
+    {
+      "role": "generalist",
+      "seed": 20261017,
+      "max_output_tokens": 500,
+      "messages": [
+        {
+          "type": "system",
+          "content": "Return only {\"approved_actions\":[],\"rationale\":\"ready\"}.\n"
+        }
+      ],
+      "input_characters": 57,
+      "input_tokens": 21,
+      "output_tokens": 11,
+      "total_tokens": 32,
+      "content": "{\"approved_actions\":[],\"rationale\":\"ready\"}",
+      "error": null,
+      "finish_reason": "stop",
+      "system_fingerprint": "vllm-0.31.0-41a9626f",
+      "seconds": 5.2696958989981795
+    }
+  ],
+  "endpoint_models": {
+    "object": "list",
+    "data": [
+      {
+        "id": "Qwen/Qwen2.5-7B-Instruct",
+        "object": "model",
+        "created": 1792278908,
+        "owned_by": "vllm",
+        "root": "Qwen/Qwen2.5-7B-Instruct",
+        "parent": null,
+        "max_model_len": 4096,
+        "permission": [
+          {
+            "id": "modelperm-8f115dde460d28cb",
+            "object": "model_permission",
+            "created": 1792278908,
+            "allow_create_engine": false,
+            "allow_sampling": true,
+            "allow_logprobs": true,
+            "allow_search_indices": false,
+            "allow_view": true,
+            "allow_fine_tuning": false,
+            "organization": "*",
+            "group": null,
+            "is_blocking": false
+          }
+        ]
+      }
+    ]
+  },
+  "completed_at": "2026-10-17T23:18:38.603840+00:00"
+}

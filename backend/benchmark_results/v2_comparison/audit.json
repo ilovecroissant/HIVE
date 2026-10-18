@@ -1,0 +1,36 @@
+{
+  "original_files_preserved_byte_for_byte": true,
+  "qwen_20261017": {
+    "episodes": 24,
+    "matched_pairs": 12,
+    "deterministic_replay": true,
+    "token_and_csv_trace_accounting": true,
+    "unchanged_generalist_source": true,
+    "terminal_failed_episodes": 0
+  },
+  "qwen_v2_graph_physics_v1_20261017": {
+    "episodes": 24,
+    "matched_pairs": 12,
+    "deterministic_replay": true,
+    "token_and_csv_trace_accounting": true,
+    "unchanged_generalist_source": true,
+    "terminal_failed_episodes": 0
+  },
+  "qwen_v21_physics_v1_20261017": {
+    "episodes": 24,
+    "matched_pairs": 12,
+    "deterministic_replay": true,
+    "token_and_csv_trace_accounting": true,
+    "unchanged_generalist_source": true,
+    "terminal_failed_episodes": 1
+  },
+  "qwen_v21_physics_v2_20261017": {
+    "episodes": 24,
+    "matched_pairs": 12,
+    "deterministic_replay": true,
+    "token_and_csv_trace_accounting": true,
+    "unchanged_generalist_source": true,
+    "terminal_failed_episodes": 2
+  },
+  "first_baseline_requests_unchanged_v1": 12
+}
