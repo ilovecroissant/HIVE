@@ -1,18 +1,60 @@
 # HIVE — Mars colony mission control
 
-HIVE coordinates resource-constrained colony recovery with Qwen2.5-7B-Instruct,
-LangGraph and a deterministic simulator. Built for the NVIDIA × Red Hat Small
-Models Hackathon. The model is served through vLLM on NVIDIA Brev L40S; this
-repository does not provision or restart that infrastructure.
+## 1. Introduce the team
 
-Three specialists (Energy, Life Support, Engineering) provide real model
-proposals. Adaptive routing records why each participates or is skipped. Commander
-compares proposals with deterministic feasible-plan forecasts, selects a validated
-plan and explains rejections. The simulator revalidates the whole plan atomically
-and reports actual resource/module changes. Explanations are public decision
-summaries, not hidden chain-of-thought. The Science card is not a connected agent.
+*Presentation: 20–30 seconds.*
 
-## Tech stack and architecture
+HIVE is a solo project by Jason Nguyen for the NVIDIA × Red Hat Small Models
+Hackathon. I built a mission-control dashboard and a resource-aware multi-agent
+system for recovering a simulated Mars colony from emergencies.
+
+## 2. The elevator pitch
+
+*Presentation: 30–40 seconds.*
+
+On Mars, fixing one problem can create another: restoring oxygen can consume the
+power needed to keep the colony alive. **HIVE coordinates those competing
+priorities using a small language model and deterministic simulation rules.**
+
+Energy, Life Support and Engineering specialists propose actions. A Commander
+compares their recommendations with feasible recovery plans, and the simulator
+validates every selected action before execution. Mission control shows the
+process—from agent activation and disagreements to actual resource changes.
+
+The question behind HIVE: how far can a small model go when its decisions are
+supported by explicit constraints, coordinated expertise and measurable outcomes?
+
+## 3. Live demo: crisis → coordination → execution
+
+*Presentation: 45–60 seconds. Start with the application already running; setup
+commands are in [Quick start](#quick-start). Keep inference visible rather than
+cutting away from the response.*
+
+1. **Input:** reset the colony, select **Dust Storm**, and click **Trigger Crisis**.
+   Point out the actual resource loss and updated simulation tick.
+2. **Processing:** click **Run HIVE Decision**. Watch polled agent statuses, then
+   inspect recorded **ACTIVE/SKIPPED** routing reasons and specialist proposals.
+3. **Coordination:** read any actual conflict, Commander approval and rejection
+   events in the latest-tick timeline. A conflict is not guaranteed or fabricated.
+4. **Output:** compare an **Executed** event's resource deltas with the colony
+   cards. Approved actions pass the same deterministic validator used to forecast
+   feasibility. Module repair, if selected, reports the actual health change.
+
+The differentiator is the visible connection between competing recommendations,
+resource constraints and executed outcomes. Explanations are public decision
+summaries, not hidden chain-of-thought. Science is not a connected inference agent.
+Human directives invoke keyword simulator operations, not another language model.
+
+Use the confirmed **v2.1 / routed / physics v1** configuration. If inference fails,
+show the error honestly; do not substitute scripted mode or call an archived run
+live. The [verification record](docs/VERIFICATION.md) documents the last endpoint
+connectivity limitation. A persistent crisis flag is not itself a recovery metric.
+
+## 4. How I built it
+
+*Presentation: 60–90 seconds. Continue showing the timeline or use this diagram.*
+
+### Architecture and stack
 
 | Layer | Implementation |
 |---|---|
@@ -32,6 +74,71 @@ flowchart LR
  Validator --> API
  API --> UI
 ```
+
+### Model and hardware design
+
+All four model roles use **Qwen/Qwen2.5-7B-Instruct**, served through vLLM's
+OpenAI-compatible API on an **NVIDIA Brev L40S GPU**. The generalist benchmark uses
+the same checkpoint. A 7B model keeps this a practical small-model experiment on
+one GPU; role specialization comes from orchestration, not additional checkpoints
+or project-specific fine-tuning. LangGraph fans out selected specialist calls and
+joins their proposals at Commander. No OpenAI-hosted model is used, and no Red Hat
+AI integration is currently implemented.
+
+Adaptive routing skips irrelevant expertise and records why. Compact prompts and
+bounded output budgets reduce repeated context. Parallel specialists share one
+inference endpoint; Commander runs after their proposals arrive. This design aims
+to use the available GPU efficiently, but we do not claim measured GPU saturation,
+maximum throughput or that the hardware was pushed to its limits.
+
+### Challenges, solutions and tradeoffs
+
+- **Competing resource demands:** individual proposals can be affordable while the
+  combined plan is not. Deterministic cumulative-budget checks and feasible-plan
+  forecasts expose these conflicts before Commander selection; execution validates
+  the complete plan atomically again.
+- **Orchestration reliability:** agent lifecycle cleanup prevents stuck statuses.
+  Bounded JSON validation/correction rejects malformed or non-listed Commander
+  plans without inventing a successful fallback decision. Failures remain visible.
+- **Inference overhead:** routing and compact context reduced recorded total tokens
+  by approximately **47%** and mean episode latency by **43%** versus original
+  HIVE. These are historical-batch comparisons, not controlled GPU speedup claims.
+- **Recovery versus cost:** prioritizing minimum reserves can reduce the weighted
+  resource score. HIVE still costs more tokens than a single agent, and original
+  physics deliberately remains unchanged for the submitted comparison.
+
+## 5. Why it matters — “So what?”
+
+*Presentation: 20–30 seconds.*
+
+HIVE makes a small model's coordination **observable and testable**: proposals are
+real inference, resource conflicts follow actual simulator rules, and execution
+reports what changed. Its contribution combines a synthetic environment,
+multi-agent orchestration, classical feasibility search and a judge-visible
+mission-control interface.
+
+In a small paired evaluation, HIVE v2.1 recovered **11/12** episodes versus **5/12**
+for a fresh single agent. It used **118,253 versus 42,569 tokens** and had a slightly
+lower mean score (**46.69 versus 47.19**). That is a promising recovery result with
+an explicit cost tradeoff, not proof of universal multi-agent superiority or
+statistical significance. One HIVE failure is included.
+
+**The value is an auditable decision process: specialists recommend, Commander
+coordinates, and deterministic rules govern execution.** Mars is the demonstration
+setting, not a claim of readiness for real mission control.
+
+
+
+
+See the [compact benchmark card](docs/BENCHMARK_CARD.md) and
+[three-minute demo script and submission checklist](docs/DEMO.md). The recommended
+section timings above total roughly 3–4 minutes; use the separate script for a
+strict three-minute recording.
+
+---
+
+The following sections provide setup commands, provenance and reproduction details
+for reviewers and developers.
 
 ## Quick start
 
