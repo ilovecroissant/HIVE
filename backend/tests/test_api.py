@@ -250,3 +250,22 @@ def test_event_has_required_fields():
 def test_state_mode_is_live():
     fresh()
     assert client.get("/simulation/state").json()["state"]["mode"] == "live"
+
+
+def test_health_reports_actual_judging_configuration(monkeypatch):
+    import main
+    monkeypatch.setattr(main, "LIVE_AGENTS", True)
+    monkeypatch.setattr(main, "GRAPH_VERSION", "v2")
+    monkeypatch.setenv("HIVE_SPECIALIST_ROUTING", "true")
+    monkeypatch.setenv("HIVE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+    config = client.get("/health").json()
+    assert config["selection_policy"] == "v2.1"
+    assert config["specialist_routing"] is True
+    assert config["physics_version"] == sim.physics_version
+    assert config["model"] == "Qwen/Qwen2.5-7B-Instruct"
+    monkeypatch.setenv("HIVE_SPECIALIST_ROUTING", "false")
+    assert client.get("/health").json()["specialist_routing"] is False
+    monkeypatch.setattr(main, "LIVE_AGENTS", False)
+    config = client.get("/health").json()
+    assert config["model"] is None
+    assert config["specialist_routing"] is False

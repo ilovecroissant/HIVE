@@ -15,7 +15,9 @@ async function request<T>(path:string, method:"GET"|"POST"="GET",body?:unknown,t
 }
 // Contract: GET state returns {state, events}; action endpoints return same envelope.
 // Edit only this adapter if your existing FastAPI routes or response shapes differ.
+export interface BackendHealth { live_agents: boolean; graph_version: string; selection_policy: string; specialist_routing: boolean; physics_version: string; model: string | null; }
 export const api={
+ health:():Promise<BackendHealth>=>request("/health"),
  getState:():Promise<StateResponse>=>IS_DEMO?demoApi.getState():request("/simulation/state"),
  reset:():Promise<ActionResponse>=>IS_DEMO?demoApi.reset():request("/simulation/reset","POST",{}),
  crisis:(kind:CrisisKind):Promise<ActionResponse>=>IS_DEMO?demoApi.crisis(kind):request("/simulation/crisis","POST",{crisis:kind}),

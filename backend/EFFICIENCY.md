@@ -135,3 +135,11 @@ that all original result files remain byte-identical. Run it again with:
 ```sh
 backend/.venv/bin/python backend/benchmark_results/v2_comparison/audit_and_compare.py
 ```
+
+## Final judging launcher
+
+From the repository root, `bash scripts/demo-backend.sh` explicitly enables live
+Qwen, graph v2 / policy v2.1, routing, horizon 3 and original physics v1. It preflights
+the existing model endpoint and starts only a local single-worker API. `/health`
+reports the selected configuration; it does not test model availability. See the
+[root README](../README.md) for frontend build configuration and demo instructions.

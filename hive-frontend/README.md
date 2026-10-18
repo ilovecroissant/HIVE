@@ -1,60 +1,22 @@
-# HIVE — Mars Mission Control frontend
+# HIVE mission control frontend
 
-Cinematic Next.js + TypeScript + Tailwind command center with an SVG Mars map, animated telemetry, colony modules, crisis controls, five specialist agent statuses, chronological event log, and Human Commander input.
+Next.js + TypeScript dashboard for the FastAPI colony simulator. See the
+[root README](../README.md) for the complete architecture, verified v2.1 launch
+configuration, model details and benchmark limitations.
 
-## Running in Windows + WSL + VS Code
+For judging, build with `NEXT_PUBLIC_DEMO_MODE=false` and
+`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`, then `npm run start`.
+These public values are embedded at build time. The API must independently enable
+live inference and v2 routing; the dashboard checks `/health` to label the mode.
 
-1. Open **Ubuntu/WSL terminal**, keep the project under `~/projects/hive-frontend` rather than `/mnt/c/...` for faster file watching.
-2. Run `code .` from the project directory (requires VS Code Remote - WSL extension).
-3. Install Node.js 20+ (Node.js 22 LTS recommended), then run `npm install`.
-4. Copy `.env.example` to `.env.local` and set `NEXT_PUBLIC_DEMO_MODE=true` for the first run.
-5. Run `npm run dev` and open http://localhost:3000 in Windows browser.
-6. Run `npm run lint` and `npm run build` before committing.
+The network has three model specialists and one Commander. Science is displayed
+as not connected. Activation/skip reasons are recorded backend events, agent
+statuses are polled during decisions, and the latest tick timeline displays real
+proposals, conflicts (when present), decisions, rejections and execution deltas.
+“All ticks” retains the previous events. No hidden chain-of-thought is displayed.
+Human directive input invokes keyword simulator operations, not a model prompt.
 
-## Important: scripted demo vs live AI
+`NEXT_PUBLIC_DEMO_MODE` values other than `false` enable the explicitly labeled
+scripted frontend demo; this does not demonstrate Qwen inference.
 
-**Default DEMO MODE is clearly labeled.** It supplies deterministic resource values and scripted example event messages. No live AI model is called, and Human Commander instructions are merely recorded.
-
-For live FastAPI responses, set:
-
-```env
-NEXT_PUBLIC_DEMO_MODE=false
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-```
-
-Restart `npm run dev` after editing `.env.local`. FastAPI must enable CORS for `http://localhost:3000`. For example:
-
-```python
-from fastapi.middleware.cors import CORSMiddleware
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_methods=["GET","POST"], allow_headers=["Content-Type"])
-```
-
-### Typed backend contract (adjust adapter if existing API differs)
-
-Defined in `lib/types.ts` and called via `lib/api.ts`:
-
-| Method | Endpoint | Request | Response |
-|---|---|---|---|
-| GET | `/simulation/state` | — | `{ "state": ColonyState, "events": AgentEvent[] }` |
-| POST | `/simulation/reset` | `{}` | same |
-| POST | `/simulation/crisis` | `{ "crisis": "dust_storm" \| "oxygen_leak" \| "power_failure" }` | same |
-| POST | `/agents/decide` | `{}` | same |
-| POST | `/commander/command` | `{ "instruction": "..." }` | same |
-
-`ColonyState.resources` should contain oxygen, power, water, food and fuel values on a **0–100** scale. Agent events should have stable IDs, ISO timestamps, event types, and titles/messages. Route assumptions are based on the earlier project plan; your actual FastAPI routes were not provided. Adapt `lib/api.ts` (and optionally normalize payload shapes) to your real backend.
-
-### Development milestones
-
-- [x] Static responsive dashboard and interactive SVG colony map
-- [x] Typed backend adapter, error handling, timeout, offline state
-- [x] Crisis and decision actions
-- [x] Agent timeline rendering and Commander control
-- [x] Explicit scripted demo mode
-- [ ] Connect to user's *actual* FastAPI route definitions and validate real data
-- [ ] Test successful production deployment with real NVIDIA/Red Hat model inference
-
-### Notes
-
-- No fake **live** AI events are generated: demo events are scripted and explicitly labeled.
-- React rendering does not claim that Human Commander commands were applied.
-- The frontend does not implement deterministic simulation logic for live mode. That belongs in FastAPI.
+Checks: `node --test tests/event-presentation.test.cjs` and `npm run build`.

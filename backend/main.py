@@ -67,7 +67,16 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "live_agents": LIVE_AGENTS}
+    # Configuration only: this is not a claim that the model endpoint is healthy.
+    return {
+        "status": "ok", "live_agents": LIVE_AGENTS,
+        "graph_version": GRAPH_VERSION,
+        "selection_policy": "v2.1" if GRAPH_VERSION == "v2" else "v1",
+        "specialist_routing": LIVE_AGENTS and GRAPH_VERSION == "v2"
+            and os.getenv("HIVE_SPECIALIST_ROUTING", "true").lower() == "true",
+        "physics_version": sim.physics_version,
+        "model": os.getenv("HIVE_MODEL", "gpt-4o-mini") if LIVE_AGENTS else None,
+    }
 
 
 # ── simulation ────────────────────────────────────────────────────────────────
